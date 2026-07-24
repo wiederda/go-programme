@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 const (
@@ -15,6 +17,8 @@ const (
 	exitReplace    = 5
 	exitPermission = 6
 	exitJSON       = 7
+	exitAborted    = 8
+	exitPartial    = 9
 )
 
 type updateError struct {
@@ -46,37 +50,62 @@ func main() {
 		os.Exit(exitOK)
 	}
 
+	args := os.Args[1:]
+
+	interactive := false
+	if len(args) > 0 && args[0] == "-i" {
+		interactive = true
+		args = args[1:]
+	}
+
 	switch {
 
-	case len(os.Args) == 3 && (os.Args[1] == "-j" || os.Args[1] == "--json"):
-		runJSON(os.Args[2])
+	case len(args) == 2 && (args[0] == "-j" || args[0] == "--json"):
+		runJSON(args[1], interactive)
 
-	case len(os.Args) == 3:
-		runSingle(os.Args[1], os.Args[2])
+	case len(args) == 2:
+		runSingle(args[0], args[1], interactive)
 
 	default:
 		errorExit("usage", exitParam)
 	}
 }
 
-// runSingle behandelt den klassischen Ein-Datei-Modus: updater <alt> <neu>
-func runSingle(oldFile, newFile string) {
+// runSingle behandelt den klassischen Ein-Datei-Modus: updater [-i] <alt> <neu>
+//
+// Standardmäßig läuft dieser Modus still (keine stdout-Ausgabe außer bei
+// Fehlern). Mit -i wird vor dem Austausch eine Rückfrage gestellt und der
+// Erfolg zusätzlich gemeldet.
+func runSingle(oldFile, newFile string, interactive bool) {
+
+	if interactive && !confirm(oldFile, newFile) {
+		errorExit("vom Benutzer abgebrochen: "+oldFile, exitAborted)
+	}
 
 	if err := update(oldFile, newFile); err != nil {
 		errorExit(err.Error(), err.code)
 	}
 
-	fmt.Println("OK")
+	if interactive {
+		fmt.Println("OK")
+	}
+
 	os.Exit(exitOK)
 }
 
-// runJSON behandelt den Batch-Modus: updater -j <config.json>
+// runJSON behandelt den Batch-Modus: updater [-i] -j <config.json>
 //
-// Die Dateien werden nacheinander abgearbeitet. Schlägt ein Eintrag fehl,
-// wird abgebrochen. Bereits erfolgreich ersetzte Dateien werden NICHT
-// automatisch zurückgerollt - das ist bewusst so gehalten, ein Rollback
-// über mehrere Dateien hinweg müsste im Zweifel manuell erfolgen.
-func runJSON(configFile string) {
+// Jeder Eintrag wird unabhängig von den anderen behandelt: schlägt ein
+// Eintrag fehl (Datei fehlt, Backup-Fehler, Berechtigungsfehler, ...),
+// wird das gemeldet, der Batch aber NICHT abgebrochen - die restlichen
+// Einträge werden trotzdem abgearbeitet. Ein automatisches Rollback
+// bereits ersetzter Dateien findet nicht statt.
+//
+// Standardmäßig läuft dieser Modus still (keine stdout-Ausgabe für
+// erfolgreiche Einträge). Fehler werden immer auf stderr gemeldet,
+// unabhängig von -i. Mit -i wird zusätzlich jeder erfolgreiche Schritt
+// gemeldet und vor jedem Austausch eine Rückfrage gestellt.
+func runJSON(configFile string, interactive bool) {
 
 	data, ioErr := os.ReadFile(configFile)
 	if ioErr != nil {
@@ -92,27 +121,60 @@ func runJSON(configFile string) {
 		errorExit("Konfigurationsdatei enthält keine Einträge", exitJSON)
 	}
 
+	hadError := false
+
 	for i, entry := range cfg.Files {
 
 		if entry.Old == "" || entry.New == "" {
-			errorExit(
-				fmt.Sprintf("Eintrag %d unvollständig (old/new erforderlich)", i+1),
-				exitJSON,
-			)
+			reportEntryError(i, entry.Old, "Eintrag unvollständig (old/new erforderlich)")
+			hadError = true
+			continue
+		}
+
+		if interactive && !confirm(entry.Old, entry.New) {
+			reportEntryError(i, entry.Old, "vom Benutzer übersprungen")
+			hadError = true
+			continue
 		}
 
 		if err := update(entry.Old, entry.New); err != nil {
-			errorExit(
-				fmt.Sprintf("Eintrag %d (%s): %s", i+1, entry.Old, err.Error()),
-				err.code,
-			)
+			reportEntryError(i, entry.Old, err.Error())
+			hadError = true
+			continue
 		}
 
-		fmt.Printf("OK: %s\n", entry.Old)
+		if interactive {
+			fmt.Printf("OK: %s\n", entry.Old)
+		}
 	}
 
-	fmt.Println("OK")
+	if hadError {
+		os.Exit(exitPartial)
+	}
+
+	if interactive {
+		fmt.Println("OK")
+	}
+
 	os.Exit(exitOK)
+}
+
+// reportEntryError meldet den Fehler eines einzelnen Batch-Eintrags auf
+// stderr, ohne das Programm zu beenden.
+func reportEntryError(index int, oldFile, msg string) {
+	fmt.Fprintf(os.Stderr, "ERROR: Eintrag %d (%s): %s\n", index+1, oldFile, msg)
+}
+
+// confirm fragt interaktiv auf stdin nach, ob eine Datei ersetzt werden soll.
+func confirm(oldFile, newFile string) bool {
+
+	fmt.Printf("%s -> %s ersetzen? [j/N]: ", oldFile, newFile)
+
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(strings.ToLower(line))
+
+	return line == "j" || line == "ja" || line == "y" || line == "yes"
 }
 
 // update ersetzt eine einzelne Datei atomar mit Backup.
@@ -223,14 +285,20 @@ func help() {
 	fmt.Println("Aktualisiert eine oder mehrere Dateien atomar mit Backup.")
 	fmt.Println()
 	fmt.Println("Aufruf:")
-	fmt.Println("  updater <alt> <neu>")
-	fmt.Println("  updater -j <config.json>")
+	fmt.Println("  updater [-i] <alt> <neu>")
+	fmt.Println("  updater [-i] -j <config.json>")
+	fmt.Println()
+	fmt.Println("  -i   interaktiv: fragt vor jedem Austausch nach und gibt")
+	fmt.Println("       den Fortschritt aus. Ohne -i läuft das Tool still")
+	fmt.Println("       (keine stdout-Ausgabe außer bei Fehlern).")
 	fmt.Println()
 	fmt.Println("JSON-Format:")
 	fmt.Println(`  { "files": [ { "old": "...", "new": "..." }, ... ] }`)
 	fmt.Println()
-	fmt.Println("Im JSON-Modus wird bei einem Fehler abgebrochen. Bereits")
-	fmt.Println("ersetzte Dateien werden NICHT automatisch zurückgerollt.")
+	fmt.Println("Im JSON-Modus wird ein fehlerhafter Eintrag gemeldet, der")
+	fmt.Println("Batch aber NICHT abgebrochen - die restlichen Einträge")
+	fmt.Println("werden trotzdem abgearbeitet. Bereits ersetzte Dateien")
+	fmt.Println("werden NICHT automatisch zurückgerollt.")
 	fmt.Println()
 	fmt.Println("Exit Codes:")
 	fmt.Println("  0  Erfolg")
@@ -241,6 +309,8 @@ func help() {
 	fmt.Println("  5  Austausch Fehler")
 	fmt.Println("  6  Rechte Fehler")
 	fmt.Println("  7  JSON/Konfigurationsfehler")
+	fmt.Println("  8  vom Benutzer abgebrochen (nur -i, Single-Modus)")
+	fmt.Println("  9  mindestens ein Eintrag im JSON-Modus fehlgeschlagen")
 }
 
 func errorExit(msg string, code int) {
