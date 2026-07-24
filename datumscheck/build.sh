@@ -1,0 +1,6 @@
+#!/bin/bash
+
+GOOS=linux GOARCH=amd64 go build -o ./linux/datumscheck main.go
+GOOS=windows GOARCH=amd64 go build -o ./windows/datumscheck.exe main.go
+GOOS=darwin GOARCH=amd64 go build -o ./macos/amd64/datumscheck main.go
+GOOS=darwin GOARCH=arm64 go build -o ./macos/arm64/datumscheck main.go

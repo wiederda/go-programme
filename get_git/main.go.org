@@ -1,0 +1,208 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+)
+
+func showHelp() {
+	fmt.Println("Verwendung: <Programm> <LISTE_DATEI_URL> <LISTE_DATEI>")
+	fmt.Println("Lädt eine Datei von der angegebenen URL herunter, bereinigt deren Inhalt und führt sie aus.")
+	fmt.Println("")
+	fmt.Println("Optionen:")
+	fmt.Println("  --help        Zeigt diese Hilfe an und beendet das Programm.")
+	fmt.Println("")
+	fmt.Println("Beispiel:")
+	fmt.Println("  <Programm> http://example.com/list.txt liste.txt")
+	fmt.Println("")
+	fmt.Println("Beispiel: <LISTE_DATEI>")
+	fmt.Println("  ALL|Servername http://example.com/reboot.sh reboot.sh [Token-Pfad]")
+}
+
+func readTokenFromFile(tokenFilePath string) string {
+	if _, err := os.Stat(tokenFilePath); os.IsNotExist(err) {
+		return ""
+	}
+
+	file, err := os.Open(tokenFilePath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	if scanner.Scan() {
+		token := strings.TrimSpace(scanner.Text())
+		if token == "" {
+			return ""
+		}
+		return token
+	}
+
+	return ""
+}
+
+func downloadFile(url, outputPath, token string) error {
+	client := &http.Client{}
+	request, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	if token != "" {
+		request.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	}
+
+	resp, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Statuscode: %d", resp.StatusCode)
+	}
+
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	_, err = file.ReadFrom(resp.Body)
+	return err
+}
+
+func getHostname() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return hostname
+}
+
+func cleanFileContent(filePath string) {
+	inputFile, err := os.Open(filePath)
+	if err != nil {
+		return
+	}
+	defer inputFile.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(inputFile)
+	for scanner.Scan() {
+		line := strings.TrimSpace(strings.ReplaceAll(scanner.Text(), "\r", ""))
+		lines = append(lines, line)
+	}
+
+	outputFile, err := os.Create(filePath)
+	if err != nil {
+		return
+	}
+	defer outputFile.Close()
+
+	for _, line := range lines {
+		_, _ = outputFile.WriteString(line + "\n")
+	}
+}
+
+func makeFileExecutable(filePath string) {
+	if strings.HasSuffix(filePath, ".sh") {
+		_ = os.Chmod(filePath, 0755)
+	}
+}
+
+func extractTokenPathFromFile(configPath string) string {
+	file, err := os.Open(configPath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "TOKEN_PATH=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
+func main() {
+	if len(os.Args) < 3 {
+		fmt.Println("Fehler: Zu wenige Argumente.")
+		return
+	}
+
+	if os.Args[1] == "--help" {
+		showHelp()
+		return
+	}
+
+	LISTE_DATEI_URL := os.Args[1]
+	LISTE_DATEI := os.Args[2]
+
+	err := downloadFile(LISTE_DATEI_URL, LISTE_DATEI, "")
+	if err != nil {
+		return
+	}
+
+	cleanFileContent(LISTE_DATEI)
+
+	hostname := getHostname()
+	if hostname == "" {
+		return
+	}
+
+	file, err := os.Open(LISTE_DATEI)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		serverParam, url, filename := fields[0], fields[1], fields[2]
+		var token string
+
+		if len(fields) == 4 {
+			tokenPath := fields[3]
+			token = readTokenFromFile(tokenPath)
+			if token == "" {
+				continue
+			}
+		}
+
+		if serverParam == "ALL" || serverParam == hostname {
+			if token != "" {
+				cmd := exec.Command("wget", "--header", fmt.Sprintf("Authorization: token %s", token), "-O", filename, url)
+				_ = cmd.Run()
+			} else {
+				cmd := exec.Command("wget", "-O", filename, url)
+				_ = cmd.Run()
+			}
+
+			cleanFileContent(filename)
+			makeFileExecutable(filename)
+		}
+	}
+}
