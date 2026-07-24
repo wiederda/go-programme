@@ -168,11 +168,10 @@ func update(oldFile, newFile string) *updateError {
 	// -------------------------
 	// neue Datei einsetzen
 	// -------------------------
+	// Kein automatisches Rollback: schlägt dieser Schritt fehl, bleibt
+	// der aktuelle Zustand unverändert bestehen. Das Backup (<alt>.old)
+	// ist vorhanden, eine Wiederherstellung muss manuell erfolgen.
 	if err := os.Rename(newFile, oldFile); err != nil {
-
-		// Rollback
-		_ = os.Rename(backup, oldFile)
-
 		return &updateError{
 			msg:  "neue Datei konnte nicht eingesetzt werden: " + err.Error(),
 			code: exitReplace,
@@ -182,12 +181,11 @@ func update(oldFile, newFile string) *updateError {
 	// -------------------------
 	// Rechte übernehmen
 	// -------------------------
+	// Kein automatisches Rollback: die neue Datei ist an dieser Stelle
+	// bereits eingesetzt, nur die Rechte konnten nicht gesetzt werden.
+	// Das Backup (<alt>.old) bleibt für eine manuelle Wiederherstellung
+	// erhalten.
 	if err := os.Chmod(oldFile, oldMode); err != nil {
-
-		// Rollback
-		_ = os.Remove(oldFile)
-		_ = os.Rename(backup, oldFile)
-
 		return &updateError{
 			msg:  "Dateirechte konnten nicht gesetzt werden: " + err.Error(),
 			code: exitPermission,
@@ -197,25 +195,23 @@ func update(oldFile, newFile string) *updateError {
 	// -------------------------
 	// Prüfung
 	// -------------------------
+	// Auch hier kein automatisches Rollback - nur eine Fehlermeldung,
+	// damit klar ist, dass die abschließende Prüfung nicht bestanden
+	// wurde. Das Backup (<alt>.old) bleibt in jedem Fall (Erfolg wie
+	// Fehler) liegen und wird erst beim nächsten Lauf für dieselbe
+	// Datei entfernt (siehe oben, Schritt "vorhandenes Backup löschen").
+	// Eine Wiederherstellung aus dem Backup muss der Anwender manuell
+	// vornehmen.
 	check, err := os.Stat(oldFile)
 
 	if err != nil ||
 		check.Mode().Perm() != oldMode {
-
-		// Rollback
-		_ = os.Remove(oldFile)
-		_ = os.Rename(backup, oldFile)
 
 		return &updateError{
 			msg:  "Dateiprüfung fehlgeschlagen: " + oldFile,
 			code: exitPermission,
 		}
 	}
-
-	// Backup (<alt>.old) bleibt bewusst liegen. Es wird erst beim
-	// nächsten Lauf für dieselbe Datei entfernt (siehe oben, Schritt
-	// "vorhandenes Backup löschen"), damit ein manuelles Rollback nach
-	// einem erfolgreichen Update jederzeit möglich bleibt.
 
 	return nil
 }

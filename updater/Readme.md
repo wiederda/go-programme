@@ -1,10 +1,10 @@
 # updater
 
-Ein kleines Kommandozeilen-Tool zum atomaren Austausch einer oder mehrerer Dateien mit automatischem Backup und Rollback bei Fehlern.
+Ein kleines Kommandozeilen-Tool zum atomaren Austausch einer oder mehrerer Dateien mit automatischem Backup. Ein Rollback erfolgt nicht automatisch, sondern liegt in der Verantwortung des Anwenders.
 
 ## Funktionsweise
 
-`updater` ersetzt eine bestehende Datei (`<alt>`) durch eine neue Datei (`<neu>`). Dabei wird die alte Datei zunächst als Backup gesichert (`<alt>.old`), bevor der eigentliche Austausch stattfindet. Schlägt ein Schritt fehl, wird versucht, den vorherigen Zustand dieser einen Datei wiederherzustellen (Rollback).
+`updater` ersetzt eine bestehende Datei (`<alt>`) durch eine neue Datei (`<neu>`). Dabei wird die alte Datei zunächst als Backup gesichert (`<alt>.old`), bevor der eigentliche Austausch stattfindet. Schlägt ein Schritt danach fehl, wird **kein automatisches Rollback** durchgeführt - der aktuelle Zustand bleibt einfach bestehen, und das Backup steht für eine manuelle Wiederherstellung zur Verfügung.
 
 Der Ablauf pro Datei im Detail:
 
@@ -17,9 +17,9 @@ Der Ablauf pro Datei im Detail:
 7. Die ursprünglichen Zugriffsrechte auf die neue Datei übertragen.
 8. Eine abschließende Prüfung durchführen (Datei vorhanden, Rechte korrekt).
 
-Schritte 6–8 enthalten ein Rollback: Falls der Austausch, das Setzen der Rechte oder die abschließende Prüfung fehlschlägt, wird versucht, die alte Datei aus dem Backup wiederherzustellen. Dieses Rollback gilt immer nur für die gerade bearbeitete Einzeldatei.
+Schlägt einer der Schritte 6–8 fehl, bricht `updater` mit einer Fehlermeldung und passendem Exit Code ab. Es wird **nicht** versucht, die alte Datei automatisch aus dem Backup wiederherzustellen - das muss der Anwender bei Bedarf selbst tun.
 
-**Das Backup (`<alt>.old`) wird nach einem erfolgreichen Lauf bewusst nicht gelöscht.** Es bleibt liegen und dient als manuelle Rollback-Möglichkeit. Erst beim nächsten Aufruf für dieselbe Datei wird es automatisch entfernt (Schritt 4), bevor ein neues Backup angelegt wird.
+**Das Backup (`<alt>.old`) wird sowohl im Erfolgs- als auch im Fehlerfall nicht sofort gelöscht.** Es bleibt liegen und dient als manuelle Rollback-Möglichkeit. Erst beim nächsten Aufruf für dieselbe Datei wird es automatisch entfernt (Schritt 4), bevor ein neues Backup angelegt wird.
 
 ## Aufruf
 
@@ -101,8 +101,7 @@ Bei Erfolg wird am Ende `OK` auf `stdout` ausgegeben und der Prozess endet mit E
 ## Sicherheitsaspekte
 
 - **Kein Datenverlust:** Solange die alte Datei existierte, bleibt durch das Backup (`<alt>.old`) sowohl im Fehlerfall als auch nach einem erfolgreichen Lauf eine wiederherstellbare Kopie erhalten – bis zum nächsten Aufruf für dieselbe Datei.
-- **Rollback nur pro Datei:** Schlägt der Austausch, das Setzen der Rechte oder die Prüfung einer Datei fehl, versucht `updater` automatisch, genau diese Datei aus ihrem Backup wiederherzustellen. Der Rückgabewert des Rollbacks selbst wird nicht geprüft.
-- **Kein Rollback über mehrere Dateien hinweg:** Im JSON-Modus werden bereits erfolgreich abgeschlossene Einträge bei einem späteren Fehler nicht automatisch zurückgerollt. Dies ist eine bewusste Design-Entscheidung, um das Tool einfach zu halten.
+- **Kein automatisches Rollback:** Weder pro Datei noch über mehrere Dateien hinweg (JSON-Modus) wird bei einem Fehler automatisch etwas zurückgerollt. Das Tool bricht ab und meldet den Fehler; eine Wiederherstellung aus dem Backup ist bewusst Sache des Anwenders, um das Tool einfach zu halten.
 - **Rechteübernahme:** Die Zugriffsrechte (Permissions) der alten Datei werden auf die neue Datei übertragen, damit sich z. B. ausführbare Dateien oder restriktiv gesetzte Konfigurationsdateien nach dem Austausch identisch verhalten.
 - **Kein Schutz vor gleichzeitigem Zugriff:** Das Tool ist nicht auf parallele Aufrufe gegen dieselbe Datei ausgelegt (keine Lock-Datei, keine Mutex-Logik).
-- **Plattformübergreifend:** Das Tool funktioniert auf Windows.
+- **Plattformübergreifend:** Das Tool funktioniert auf Windows, Linux und macOS.
