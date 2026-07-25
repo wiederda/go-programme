@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 )
 
 const (
@@ -17,7 +15,6 @@ const (
 	exitReplace    = 5
 	exitPermission = 6
 	exitJSON       = 7
-	exitAborted    = 8
 	exitPartial    = 9
 )
 
@@ -41,6 +38,11 @@ type jsonConfig struct {
 	Files []fileEntry `json:"files"`
 }
 
+// logOutput steuert global, ob Fortschritt und Fehler ausgegeben werden.
+// Ohne -log läuft updater komplett still (kein stdout, kein stderr) - für
+// unbeaufsichtigte Läufe (Cron etc.), wo ohnehin nur der Exit Code zählt.
+var logOutput bool
+
 func main() {
 
 	if len(os.Args) == 2 &&
@@ -52,48 +54,42 @@ func main() {
 
 	args := os.Args[1:]
 
-	interactive := false
-	if len(args) > 0 && args[0] == "-i" {
-		interactive = true
+	if len(args) > 0 && args[0] == "-log" {
+		logOutput = true
 		args = args[1:]
 	}
 
 	switch {
 
 	case len(args) == 2 && (args[0] == "-j" || args[0] == "--json"):
-		runJSON(args[1], interactive)
+		runJSON(args[1])
 
 	case len(args) == 2:
-		runSingle(args[0], args[1], interactive)
+		runSingle(args[0], args[1])
 
 	default:
 		errorExit("usage", exitParam)
 	}
 }
 
-// runSingle behandelt den klassischen Ein-Datei-Modus: updater [-i] <alt> <neu>
+// runSingle behandelt den klassischen Ein-Datei-Modus: updater [-log] <alt> <neu>
 //
-// Standardmäßig läuft dieser Modus still (keine stdout-Ausgabe außer bei
-// Fehlern). Mit -i wird vor dem Austausch eine Rückfrage gestellt und der
-// Erfolg zusätzlich gemeldet.
-func runSingle(oldFile, newFile string, interactive bool) {
-
-	if interactive && !confirm(oldFile, newFile) {
-		errorExit("vom Benutzer abgebrochen: "+oldFile, exitAborted)
-	}
+// Standardmäßig läuft dieser Modus komplett still (weder stdout noch
+// stderr). Mit -log wird der Erfolg zusätzlich gemeldet.
+func runSingle(oldFile, newFile string) {
 
 	if err := update(oldFile, newFile); err != nil {
 		errorExit(err.Error(), err.code)
 	}
 
-	if interactive {
+	if logOutput {
 		fmt.Println("OK")
 	}
 
 	os.Exit(exitOK)
 }
 
-// runJSON behandelt den Batch-Modus: updater [-i] -j <config.json>
+// runJSON behandelt den Batch-Modus: updater [-log] -j <config.json>
 //
 // Jeder Eintrag wird unabhängig von den anderen behandelt: schlägt ein
 // Eintrag fehl (Datei fehlt, Backup-Fehler, Berechtigungsfehler, ...),
@@ -101,11 +97,9 @@ func runSingle(oldFile, newFile string, interactive bool) {
 // Einträge werden trotzdem abgearbeitet. Ein automatisches Rollback
 // bereits ersetzter Dateien findet nicht statt.
 //
-// Standardmäßig läuft dieser Modus still (keine stdout-Ausgabe für
-// erfolgreiche Einträge). Fehler werden immer auf stderr gemeldet,
-// unabhängig von -i. Mit -i wird zusätzlich jeder erfolgreiche Schritt
-// gemeldet und vor jedem Austausch eine Rückfrage gestellt.
-func runJSON(configFile string, interactive bool) {
+// Standardmäßig läuft dieser Modus komplett still. Mit -log wird jeder
+// erfolgreiche und jeder fehlgeschlagene Schritt gemeldet.
+func runJSON(configFile string) {
 
 	data, ioErr := os.ReadFile(configFile)
 	if ioErr != nil {
@@ -131,19 +125,13 @@ func runJSON(configFile string, interactive bool) {
 			continue
 		}
 
-		if interactive && !confirm(entry.Old, entry.New) {
-			reportEntryError(i, entry.Old, "vom Benutzer übersprungen")
-			hadError = true
-			continue
-		}
-
 		if err := update(entry.Old, entry.New); err != nil {
 			reportEntryError(i, entry.Old, err.Error())
 			hadError = true
 			continue
 		}
 
-		if interactive {
+		if logOutput {
 			fmt.Printf("OK: %s\n", entry.Old)
 		}
 	}
@@ -152,7 +140,7 @@ func runJSON(configFile string, interactive bool) {
 		os.Exit(exitPartial)
 	}
 
-	if interactive {
+	if logOutput {
 		fmt.Println("OK")
 	}
 
@@ -160,21 +148,11 @@ func runJSON(configFile string, interactive bool) {
 }
 
 // reportEntryError meldet den Fehler eines einzelnen Batch-Eintrags auf
-// stderr, ohne das Programm zu beenden.
+// stderr, sofern -log gesetzt ist, ohne das Programm zu beenden.
 func reportEntryError(index int, oldFile, msg string) {
-	fmt.Fprintf(os.Stderr, "ERROR: Eintrag %d (%s): %s\n", index+1, oldFile, msg)
-}
-
-// confirm fragt interaktiv auf stdin nach, ob eine Datei ersetzt werden soll.
-func confirm(oldFile, newFile string) bool {
-
-	fmt.Printf("%s -> %s ersetzen? [j/N]: ", oldFile, newFile)
-
-	reader := bufio.NewReader(os.Stdin)
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(strings.ToLower(line))
-
-	return line == "j" || line == "ja" || line == "y" || line == "yes"
+	if logOutput {
+		fmt.Fprintf(os.Stderr, "ERROR: Eintrag %d (%s): %s\n", index+1, oldFile, msg)
+	}
 }
 
 // update ersetzt eine einzelne Datei atomar mit Backup.
@@ -285,12 +263,13 @@ func help() {
 	fmt.Println("Aktualisiert eine oder mehrere Dateien atomar mit Backup.")
 	fmt.Println()
 	fmt.Println("Aufruf:")
-	fmt.Println("  updater [-i] <alt> <neu>")
-	fmt.Println("  updater [-i] -j <config.json>")
+	fmt.Println("  updater [-log] <alt> <neu>")
+	fmt.Println("  updater [-log] -j <config.json>")
 	fmt.Println()
-	fmt.Println("  -i   interaktiv: fragt vor jedem Austausch nach und gibt")
-	fmt.Println("       den Fortschritt aus. Ohne -i läuft das Tool still")
-	fmt.Println("       (keine stdout-Ausgabe außer bei Fehlern).")
+	fmt.Println("  -log   gibt Fortschritt und Fehler aus (OK je Datei,")
+	fmt.Println("         abschließend OK, Fehler mit ERROR-Präfix). Ohne")
+	fmt.Println("         -log läuft das Tool komplett still - weder")
+	fmt.Println("         stdout noch stderr, nur der Exit Code zählt.")
 	fmt.Println()
 	fmt.Println("JSON-Format:")
 	fmt.Println(`  { "files": [ { "old": "...", "new": "..." }, ... ] }`)
@@ -309,13 +288,17 @@ func help() {
 	fmt.Println("  5  Austausch Fehler")
 	fmt.Println("  6  Rechte Fehler")
 	fmt.Println("  7  JSON/Konfigurationsfehler")
-	fmt.Println("  8  vom Benutzer abgebrochen (nur -i, Single-Modus)")
 	fmt.Println("  9  mindestens ein Eintrag im JSON-Modus fehlgeschlagen")
 }
 
+// errorExit meldet einen Fehler auf stderr, sofern -log gesetzt ist, und
+// beendet das Programm mit dem passenden Exit Code. Der Exit Code wird
+// immer gesetzt, unabhängig von -log - nur die Textausgabe ist optional.
 func errorExit(msg string, code int) {
 
-	fmt.Fprintln(os.Stderr, "ERROR:", msg)
+	if logOutput {
+		fmt.Fprintln(os.Stderr, "ERROR:", msg)
+	}
 
 	os.Exit(code)
 }
