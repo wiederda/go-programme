@@ -13,8 +13,9 @@ Der Client ist für **Windows und Linux** ausgelegt und verwendet standardmäßi
 * Let's Encrypt Staging als Standard
 * Let's Encrypt Production über `-production`
 * DNS-01 Challenge
-* Wiederverwendung vorhandener Private Keys
-* Wiederverwendung vorhandener CSRs
+* Der ACME-Client benötigt einen vorher erzeugten Private Key und CSR für die Zertifikatsanforderung.
+  Die Erzeugung von Zertifikats-Keys und CSRs erfolgt außerhalb des ACME-Clients.
+  Für ein neues Zertifikat wird empfohlen, einen neuen Private Key und einen neuen CSR zu erzeugen.
 * Prüfung, ob Private Key und CSR zusammengehören
 * Verwaltung eines separaten ACME-Accounts
 * Speicherung des ACME-Account-Status
