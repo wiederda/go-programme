@@ -68,7 +68,12 @@ type Challenge struct {
 	Token  string `json:"token"`
 }
 
-func NewACMEClient(ctx context.Context, directoryURL string, accountKeyPath string) (*ACMEClient, error) {
+func NewACMEClient(
+	ctx context.Context,
+	directoryURL string,
+	accountKeyPath string,
+) (*ACMEClient, error) {
+
 	return &ACMEClient{
 		HTTPClient:   &http.Client{Timeout: 60 * time.Second},
 		DirectoryURL: strings.TrimRight(directoryURL, "/"),
@@ -96,22 +101,34 @@ func ParseACMEError(body []byte) string {
 func (c *ACMEClient) LoadDirectory(ctx context.Context) error {
 	resp, err := c.HTTPClient.Get(c.DirectoryURL)
 	if err != nil {
-		return fmt.Errorf("ACME Directory konnte nicht geladen werden: %w", err)
+		return fmt.Errorf(
+			"ACME Directory konnte nicht geladen werden: %w",
+			err,
+		)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ACME Directory liefert HTTP %d", resp.StatusCode)
+		return fmt.Errorf(
+			"ACME Directory liefert HTTP %d",
+			resp.StatusCode,
+		)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&c.Directory); err != nil {
-		return fmt.Errorf("ACME Directory ist ungültig: %w", err)
+		return fmt.Errorf(
+			"ACME Directory ist ungültig: %w",
+			err,
+		)
 	}
 
 	if c.Directory.NewNonce == "" ||
 		c.Directory.NewAccount == "" ||
 		c.Directory.NewOrder == "" {
-		return errors.New("ACME Directory enthält nicht alle benötigten Endpunkte")
+
+		return errors.New(
+			"ACME Directory enthält nicht alle benötigten Endpunkte",
+		)
 	}
 
 	return c.GetNonce(ctx)
@@ -130,24 +147,35 @@ func (c *ACMEClient) GetNonce(ctx context.Context) error {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("ACME Nonce konnte nicht abgefragt werden: %w", err)
+		return fmt.Errorf(
+			"ACME Nonce konnte nicht abgefragt werden: %w",
+			err,
+		)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("ACME Nonce liefert HTTP %d", resp.StatusCode)
+		return fmt.Errorf(
+			"ACME Nonce liefert HTTP %d",
+			resp.StatusCode,
+		)
 	}
 
 	c.Nonce = resp.Header.Get("Replay-Nonce")
 
 	if c.Nonce == "" {
-		return errors.New("ACME Server hat keine Replay-Nonce geliefert")
+		return errors.New(
+			"ACME Server hat keine Replay-Nonce geliefert",
+		)
 	}
 
 	return nil
 }
 
-func (c *ACMEClient) FindExistingAccount(ctx context.Context) (string, error) {
+func (c *ACMEClient) FindExistingAccount(
+	ctx context.Context,
+) (string, error) {
+
 	fmt.Println("Suche vorhandenes ACME Account...")
 
 	payload := map[string]any{
@@ -156,7 +184,12 @@ func (c *ACMEClient) FindExistingAccount(ctx context.Context) (string, error) {
 
 	fmt.Println("Sende ACME Account Suche...")
 
-	resp, err := c.postJWS(ctx, c.Directory.NewAccount, payload, false)
+	resp, err := c.postJWS(
+		ctx,
+		c.Directory.NewAccount,
+		payload,
+		false,
+	)
 
 	fmt.Println("ACME Account Suche Antwort erhalten.")
 
@@ -169,6 +202,7 @@ func (c *ACMEClient) FindExistingAccount(ctx context.Context) (string, error) {
 
 	if resp.StatusCode == http.StatusOK {
 		location := resp.Header.Get("Location")
+
 		if location == "" {
 			return "", errors.New(
 				"ACME Account Antwort enthält keine Location",
@@ -184,12 +218,19 @@ func (c *ACMEClient) FindExistingAccount(ctx context.Context) (string, error) {
 		detail := ParseACMEError(body)
 
 		if detail != "" {
-			fmt.Println("ACME Account nicht vorhanden:", detail)
+			fmt.Println(
+				"ACME Account nicht vorhanden:",
+				detail,
+			)
 		} else {
-			fmt.Println("ACME Account nicht vorhanden.")
+			fmt.Println(
+				"ACME Account nicht vorhanden.",
+			)
 		}
 
-		return "", errors.New("kein bestehendes ACME Account gefunden")
+		return "", errors.New(
+			"kein bestehendes ACME Account gefunden",
+		)
 	}
 
 	return "", fmt.Errorf(
@@ -199,7 +240,11 @@ func (c *ACMEClient) FindExistingAccount(ctx context.Context) (string, error) {
 	)
 }
 
-func (c *ACMEClient) CreateAccount(ctx context.Context, email string) (string, error) {
+func (c *ACMEClient) CreateAccount(
+	ctx context.Context,
+	email string,
+) (string, error) {
+
 	payload := map[string]any{
 		"contact": []string{
 			"mailto:" + email,
@@ -207,7 +252,12 @@ func (c *ACMEClient) CreateAccount(ctx context.Context, email string) (string, e
 		"termsOfServiceAgreed": true,
 	}
 
-	resp, err := c.postJWS(ctx, c.Directory.NewAccount, payload, false)
+	resp, err := c.postJWS(
+		ctx,
+		c.Directory.NewAccount,
+		payload,
+		false,
+	)
 	if err != nil {
 		return "", err
 	}
@@ -226,6 +276,7 @@ func (c *ACMEClient) CreateAccount(ctx context.Context, email string) (string, e
 	}
 
 	location := resp.Header.Get("Location")
+
 	if location == "" {
 		return "", errors.New(
 			"ACME Account Antwort enthält keine Location",
@@ -235,21 +286,37 @@ func (c *ACMEClient) CreateAccount(ctx context.Context, email string) (string, e
 	return location, nil
 }
 
-func (c *ACMEClient) CreateOrder(ctx context.Context, domains []string) (*Order, error) {
-	identifiers := make([]Identifier, 0, len(domains))
+func (c *ACMEClient) CreateOrder(
+	ctx context.Context,
+	domains []string,
+) (*Order, error) {
+
+	identifiers := make(
+		[]Identifier,
+		0,
+		len(domains),
+	)
 
 	for _, domain := range domains {
-		identifiers = append(identifiers, Identifier{
-			Type:  "dns",
-			Value: domain,
-		})
+		identifiers = append(
+			identifiers,
+			Identifier{
+				Type:  "dns",
+				Value: domain,
+			},
+		)
 	}
 
 	payload := map[string]any{
 		"identifiers": identifiers,
 	}
 
-	resp, err := c.postJWS(ctx, c.Directory.NewOrder, payload, true)
+	resp, err := c.postJWS(
+		ctx,
+		c.Directory.NewOrder,
+		payload,
+		true,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -274,13 +341,19 @@ func (c *ACMEClient) CreateOrder(ctx context.Context, domains []string) (*Order,
 	order.URL = resp.Header.Get("Location")
 
 	if order.URL == "" {
-		return nil, errors.New("ACME Order enthält keine Location")
+		return nil, errors.New(
+			"ACME Order enthält keine Location",
+		)
 	}
 
 	return &order, nil
 }
 
-func (c *ACMEClient) GetAuthorization(ctx context.Context, url string) (*Authorization, error) {
+func (c *ACMEClient) GetAuthorization(
+	ctx context.Context,
+	url string,
+) (*Authorization, error) {
+
 	resp, err := c.signedGET(ctx, url)
 	if err != nil {
 		return nil, err
@@ -308,8 +381,17 @@ func (c *ACMEClient) GetAuthorization(ctx context.Context, url string) (*Authori
 	return &authz, nil
 }
 
-func (c *ACMEClient) AcceptChallenge(ctx context.Context, url string) error {
-	resp, err := c.postJWS(ctx, url, map[string]any{}, true)
+func (c *ACMEClient) AcceptChallenge(
+	ctx context.Context,
+	url string,
+) error {
+
+	resp, err := c.postJWS(
+		ctx,
+		url,
+		map[string]any{},
+		true,
+	)
 	if err != nil {
 		return err
 	}
@@ -328,37 +410,59 @@ func (c *ACMEClient) AcceptChallenge(ctx context.Context, url string) error {
 	return nil
 }
 
-func (c *ACMEClient) WaitAuthorization(ctx context.Context, url string) error {
+func (c *ACMEClient) WaitAuthorization(
+	ctx context.Context,
+	url string,
+) error {
+
 	for {
 		authz, err := c.GetAuthorization(ctx, url)
 		if err != nil {
 			return err
 		}
 
-		fmt.Println("Authorization Status:", authz.Status)
+		fmt.Println(
+			"Authorization Status:",
+			authz.Status,
+		)
 
 		switch authz.Status {
 		case "valid":
 			return nil
 
 		case "invalid":
-			return errors.New("ACME Authorization wurde abgelehnt")
+			return errors.New(
+				"ACME Authorization wurde abgelehnt",
+			)
 
 		case "pending", "processing":
 			time.Sleep(3 * time.Second)
 
 		default:
-			return fmt.Errorf("unbekannter Authorization Status: %s", authz.Status)
+			return fmt.Errorf(
+				"unbekannter Authorization Status: %s",
+				authz.Status,
+			)
 		}
 	}
 }
 
-func (c *ACMEClient) FinalizeOrder(ctx context.Context, url string, csrDER []byte) error {
+func (c *ACMEClient) FinalizeOrder(
+	ctx context.Context,
+	url string,
+	csrDER []byte,
+) error {
+
 	payload := map[string]any{
 		"csr": base64.RawURLEncoding.EncodeToString(csrDER),
 	}
 
-	resp, err := c.postJWS(ctx, url, payload, true)
+	resp, err := c.postJWS(
+		ctx,
+		url,
+		payload,
+		true,
+	)
 	if err != nil {
 		return err
 	}
@@ -377,32 +481,48 @@ func (c *ACMEClient) FinalizeOrder(ctx context.Context, url string, csrDER []byt
 	return nil
 }
 
-func (c *ACMEClient) WaitOrder(ctx context.Context, url string) (*Order, error) {
+func (c *ACMEClient) WaitOrder(
+	ctx context.Context,
+	url string,
+) (*Order, error) {
+
 	for {
 		order, err := c.GetOrder(ctx, url)
 		if err != nil {
 			return nil, err
 		}
 
-		fmt.Println("Order Status:", order.Status)
+		fmt.Println(
+			"Order Status:",
+			order.Status,
+		)
 
 		switch order.Status {
 		case "valid":
 			return order, nil
 
 		case "invalid":
-			return nil, errors.New("ACME Order wurde ungültig")
+			return nil, errors.New(
+				"ACME Order wurde ungültig",
+			)
 
 		case "pending", "processing":
 			time.Sleep(3 * time.Second)
 
 		default:
-			return nil, fmt.Errorf("unbekannter Order Status: %s", order.Status)
+			return nil, fmt.Errorf(
+				"unbekannter Order Status: %s",
+				order.Status,
+			)
 		}
 	}
 }
 
-func (c *ACMEClient) GetOrder(ctx context.Context, url string) (*Order, error) {
+func (c *ACMEClient) GetOrder(
+	ctx context.Context,
+	url string,
+) (*Order, error) {
+
 	resp, err := c.signedGET(ctx, url)
 	if err != nil {
 		return nil, err
@@ -430,7 +550,11 @@ func (c *ACMEClient) GetOrder(ctx context.Context, url string) (*Order, error) {
 	return &order, nil
 }
 
-func (c *ACMEClient) FetchCertificate(ctx context.Context, url string) ([]byte, error) {
+func (c *ACMEClient) FetchCertificate(
+	ctx context.Context,
+	url string,
+) ([]byte, error) {
+
 	resp, err := c.signedGET(ctx, url)
 	if err != nil {
 		return nil, err
@@ -450,23 +574,19 @@ func (c *ACMEClient) FetchCertificate(ctx context.Context, url string) ([]byte, 
 	return io.ReadAll(resp.Body)
 }
 
-func (c *ACMEClient) DNS01Value(token string) (string, error) {
-	if c.AccountKey == nil {
-		return "", errors.New("ACME Account Key wurde nicht geladen")
-	}
+func (c *ACMEClient) signedGET(
+	ctx context.Context,
+	url string,
+) (*http.Response, error) {
 
-	thumbprint, err := JWKThumbprint(&c.AccountKey.PublicKey)
-	if err != nil {
-		return "", err
-	}
-
-	return DNS01Value(token, thumbprint), nil
-}
-
-func (c *ACMEClient) signedGET(ctx context.Context, url string) (*http.Response, error) {
 	payload := []byte{}
 
-	return c.postJWSWithPayload(ctx, url, payload, true)
+	return c.postJWSWithPayload(
+		ctx,
+		url,
+		payload,
+		true,
+	)
 }
 
 func (c *ACMEClient) postJWS(
@@ -475,12 +595,18 @@ func (c *ACMEClient) postJWS(
 	payload any,
 	useAccount bool,
 ) (*http.Response, error) {
+
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
-	return c.postJWSWithPayload(ctx, url, data, useAccount)
+	return c.postJWSWithPayload(
+		ctx,
+		url,
+		data,
+		useAccount,
+	)
 }
 
 func (c *ACMEClient) postJWSWithPayload(
@@ -506,12 +632,16 @@ func (c *ACMEClient) postJWSWithPayload(
 
 		if useAccount {
 			if c.AccountURL == "" {
-				return nil, errors.New("ACME Account URL fehlt")
+				return nil, errors.New(
+					"ACME Account URL fehlt",
+				)
 			}
 
 			protected["kid"] = c.AccountURL
 		} else {
-			jwk, err := PublicJWK(&c.AccountKey.PublicKey)
+			jwk, err := PublicJWK(
+				&c.AccountKey.PublicKey,
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -524,12 +654,22 @@ func (c *ACMEClient) postJWSWithPayload(
 			return nil, err
 		}
 
-		protected64 := base64.RawURLEncoding.EncodeToString(protectedJSON)
-		payload64 := base64.RawURLEncoding.EncodeToString(payload)
+		protected64 :=
+			base64.RawURLEncoding.EncodeToString(
+				protectedJSON,
+			)
 
-		signingInput := protected64 + "." + payload64
+		payload64 :=
+			base64.RawURLEncoding.EncodeToString(
+				payload,
+			)
 
-		hash := sha256.Sum256([]byte(signingInput))
+		signingInput :=
+			protected64 + "." + payload64
+
+		hash := sha256.Sum256(
+			[]byte(signingInput),
+		)
 
 		signature, err := rsa.SignPKCS1v15(
 			rand.Reader,
@@ -544,7 +684,9 @@ func (c *ACMEClient) postJWSWithPayload(
 		body := map[string]string{
 			"protected": protected64,
 			"payload":   payload64,
-			"signature": base64.RawURLEncoding.EncodeToString(signature),
+			"signature": base64.RawURLEncoding.EncodeToString(
+				signature,
+			),
 		}
 
 		bodyJSON, err := json.Marshal(body)
@@ -562,8 +704,14 @@ func (c *ACMEClient) postJWSWithPayload(
 			return nil, err
 		}
 
-		req.Header.Set("Content-Type", "application/jose+json")
-		req.Header.Set("Accept", "application/json")
+		req.Header.Set(
+			"Content-Type",
+			"application/jose+json",
+		)
+		req.Header.Set(
+			"Accept",
+			"application/json",
+		)
 
 		fmt.Println("ACME HTTP POST:", url)
 		fmt.Println("ACME HTTP Request wird gesendet...")
@@ -579,14 +727,18 @@ func (c *ACMEClient) postJWSWithPayload(
 			)
 		}
 
-		fmt.Println("ACME HTTP Status:", resp.Status)
+		fmt.Println(
+			"ACME HTTP Status:",
+			resp.Status,
+		)
 
 		if nonce := resp.Header.Get("Replay-Nonce"); nonce != "" {
 			c.Nonce = nonce
 		}
 
-		// Nur ein 400 mit dem ACME-Fehler "badNonce"
-		// darf mit einer neuen Nonce wiederholt werden.
+		// Nur ein 400 mit dem ACME-Fehler
+		// "badNonce" darf mit einer neuen Nonce
+		// wiederholt werden.
 		if resp.StatusCode == http.StatusBadRequest &&
 			attempt == 0 {
 
@@ -602,10 +754,16 @@ func (c *ACMEClient) postJWSWithPayload(
 
 			var acmeErr ACMEError
 
-			if err := json.Unmarshal(body, &acmeErr); err == nil &&
-				acmeErr.Type == "urn:ietf:params:acme:error:badNonce" {
+			if err := json.Unmarshal(
+				body,
+				&acmeErr,
+			); err == nil &&
+				acmeErr.Type ==
+					"urn:ietf:params:acme:error:badNonce" {
 
-				fmt.Println("ACME Nonce ungültig, wiederhole Request...")
+				fmt.Println(
+					"ACME Nonce ungültig, wiederhole Request...",
+				)
 
 				if c.Nonce == "" {
 					if err := c.GetNonce(ctx); err != nil {
@@ -618,7 +776,9 @@ func (c *ACMEClient) postJWSWithPayload(
 
 			// Kein badNonce:
 			// Die 400-Antwort gehört an den Aufrufer zurück.
-			resp.Body = io.NopCloser(strings.NewReader(string(body)))
+			resp.Body = io.NopCloser(
+				strings.NewReader(string(body)),
+			)
 
 			return resp, nil
 		}
@@ -631,24 +791,49 @@ func (c *ACMEClient) postJWSWithPayload(
 	)
 }
 
-func PublicJWK(key *rsa.PublicKey) (map[string]string, error) {
+func PublicJWK(
+	key *rsa.PublicKey,
+) (map[string]string, error) {
+
 	return map[string]string{
 		"kty": "RSA",
-		"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
-		"e":   base64.RawURLEncoding.EncodeToString(intToBytes(key.E)),
+		"n": base64.RawURLEncoding.EncodeToString(
+			key.N.Bytes(),
+		),
+		"e": base64.RawURLEncoding.EncodeToString(
+			intToBytes(key.E),
+		),
 	}, nil
 }
 
-func JWKThumbprint(key *rsa.PublicKey) (string, error) {
-	n := base64.RawURLEncoding.EncodeToString(key.N.Bytes())
-	e := base64.RawURLEncoding.EncodeToString(intToBytes(key.E))
+func JWKThumbprint(
+	key *rsa.PublicKey,
+) (string, error) {
 
-	// RFC 7638: exakt diese Mitglieder und lexikografische Reihenfolge.
-	canonical := `{"e":"` + e + `","kty":"RSA","n":"` + n + `"}`
+	n := base64.RawURLEncoding.EncodeToString(
+		key.N.Bytes(),
+	)
 
-	hash := sha256.Sum256([]byte(canonical))
+	e := base64.RawURLEncoding.EncodeToString(
+		intToBytes(key.E),
+	)
 
-	return base64.RawURLEncoding.EncodeToString(hash[:]), nil
+	// RFC 7638: exakt diese Mitglieder
+	// und lexikografische Reihenfolge.
+	canonical :=
+		`{"e":"` +
+			e +
+			`","kty":"RSA","n":"` +
+			n +
+			`"}`
+
+	hash := sha256.Sum256(
+		[]byte(canonical),
+	)
+
+	return base64.RawURLEncoding.EncodeToString(
+		hash[:],
+	), nil
 }
 
 func intToBytes(v int) []byte {
@@ -659,20 +844,35 @@ func intToBytes(v int) []byte {
 	var result []byte
 
 	for v > 0 {
-		result = append([]byte{byte(v & 0xff)}, result...)
+		result = append(
+			[]byte{byte(v & 0xff)},
+			result...,
+		)
+
 		v >>= 8
 	}
 
 	return result
 }
 
-func WriteCertificate(path string, data []byte) error {
+func WriteCertificate(
+	path string,
+	data []byte,
+) error {
+
 	if err := EnsureParentDirectory(path); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("Zertifikat konnte nicht gespeichert werden: %w", err)
+	if err := os.WriteFile(
+		path,
+		data,
+		0644,
+	); err != nil {
+		return fmt.Errorf(
+			"Zertifikat konnte nicht gespeichert werden: %w",
+			err,
+		)
 	}
 
 	return nil

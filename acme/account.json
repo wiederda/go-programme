@@ -1,0 +1,5 @@
+{
+  "directory": "https://acme-staging-v02.api.letsencrypt.org/directory",
+  "account_url": "https://acme-staging-v02.api.letsencrypt.org/acme/acct/338665943",
+  "email": "christian.burau@icloud.com"
+}

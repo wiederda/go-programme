@@ -1,6 +1,10 @@
 package main
 
-import "context"
+import (
+	"context"
+	"os"
+	"strings"
+)
 
 type DNSProviderConfig struct {
 	Authentication string
@@ -25,7 +29,15 @@ type DNSProvider interface {
 	Cleanup(ctx context.Context, fqdn string, value string) error
 }
 
-type IPv64Provider struct{}
+type IPv64Provider struct {
+	Token string
+}
+
+func NewIPv64Provider(token string) *IPv64Provider {
+	return &IPv64Provider{
+		Token: token,
+	}
+}
 
 func (p *IPv64Provider) Name() string {
 	return "ipv64"
@@ -51,18 +63,42 @@ func (p *IPv64Provider) Config() DNSProviderConfig {
 }
 
 func (p *IPv64Provider) Present(ctx context.Context, fqdn string, value string) error {
-	return nil
+	domain, prefix, err := IPv64SplitFQDN(fqdn)
+	if err != nil {
+		return err
+	}
+
+	return p.addRecord(ctx, domain, prefix, "TXT", value)
 }
 
 func (p *IPv64Provider) Cleanup(ctx context.Context, fqdn string, value string) error {
-	return nil
+	domain, prefix, err := IPv64SplitFQDN(fqdn)
+	if err != nil {
+		return err
+	}
+
+	return p.deleteRecord(ctx, domain, prefix, "TXT", value)
 }
 
 var dnsProviders = map[string]DNSProvider{
-	"ipv64": &IPv64Provider{},
+	"ipv64": NewIPv64Provider(""),
 }
 
 func GetDNSProvider(name string) (DNSProvider, bool) {
 	provider, ok := dnsProviders[name]
-	return provider, ok
+
+	if !ok {
+		return nil, false
+	}
+
+	switch p := provider.(type) {
+	case *IPv64Provider:
+		p.Token = GetIPv64Token()
+	}
+
+	return provider, true
+}
+
+func GetIPv64Token() string {
+	return strings.TrimSpace(os.Getenv("IPV64_TOKEN"))
 }
